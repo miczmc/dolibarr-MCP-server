@@ -121,14 +121,14 @@ python src/dolibarr_mcp_server.py --test
 
 ## 🔒 Sécurité
 
-- ⚠️ **Ne jamais commiter votre clé API**
+
 - Utilisez des variables d'environnement
 - Limitez les permissions de l'utilisateur API
 - Utilisez HTTPS uniquement
 
 ## 🤝 Contribution
 
-Les contributions sont les bienvenues ! Merci de :
+Les contributions sont les bienvenues ! 
 
 1. Fork le projet
 2. Créer une branche pour votre fonctionnalité
@@ -138,7 +138,7 @@ Les contributions sont les bienvenues ! Merci de :
 
 ## 📄 License
 
-Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
+Ce projet est sous licence GNu. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
 
 ## 🆘 Support
 
