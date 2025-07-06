@@ -40,7 +40,7 @@ Une intégration MCP (Model Context Protocol) pour connecter **Claude AI** à vo
 
 ### 1. Cloner le repository
 ```bash
-git clone https://github.com/votre-username/dolibarr-mcp-integration.git
+git clone https://github.com/miczmc/dolibarr-mcp-integration.git
 cd dolibarr-mcp-integration
 ```
 
