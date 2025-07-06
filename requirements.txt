@@ -1,0 +1,15 @@
+# Dolibarr MCP Integration - Requirements
+# Core MCP dependencies
+mcp>=1.0.0
+httpx>=0.25.0
+pydantic>=2.0.0
+
+# Additional utilities
+python-dotenv>=1.0.0
+asyncio-mqtt>=0.11.0
+
+# Development dependencies (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
