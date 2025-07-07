@@ -2,6 +2,7 @@
 """
 Serveur MCP pour intégrer Dolibarr CRM avec Claude
 Version complète avec gestion des contacts, entreprises, propositions, agenda et tickets
+VERSION CORRIGÉE avec tri approprié des événements
 """
 
 import asyncio
@@ -37,7 +38,7 @@ logger.info(f"Limite par défaut: {DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 'aucu
 logger.info(f"Ordre par défaut: {DEFAULT_SORT_ORDER}")
 
 class DolibarrAPI:
-    """Client pour l'API Dolibarr"""
+    """Client pour l'API Dolibarr - VERSION CORRIGÉE"""
     
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip('/')
@@ -47,8 +48,8 @@ class DolibarrAPI:
             "Content-Type": "application/json"
         }
     
-    def _build_params(self, limit: int = None, sort_order: str = None, search_filters: str = "") -> str:
-        """Construit les paramètres d'URL pour les requêtes API"""
+    def _build_params(self, limit: int = None, sort_order: str = None, search_filters: str = "", sort_field: str = None) -> str:
+        """Construit les paramètres d'URL pour les requêtes API - VERSION CORRIGÉE"""
         if limit is None:
             limit = DEFAULT_LIMIT
         if sort_order is None:
@@ -60,15 +61,24 @@ class DolibarrAPI:
         if limit > 0:
             params.append(f"limit={limit}")
         
-        # Ajouter l'ordre de tri
+        # Ajouter l'ordre de tri - CORRECTION PRINCIPALE
         if sort_order.upper() in ["ASC", "DESC"]:
             params.append(f"sortorder={sort_order.upper()}")
+            
+            # Spécifier le champ de tri selon le contexte
+            if sort_field:
+                params.append(f"sortfield={sort_field}")
+            else:
+                # Champ par défaut pour les événements d'agenda
+                params.append(f"sortfield=t.datep")
         
         # Ajouter les filtres de recherche
         if search_filters:
             params.append(f"sqlfilters={search_filters}")
         
         return "?" + "&".join(params) if params else ""
+
+    async def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Any:
         """Effectue une requête HTTP vers l'API Dolibarr"""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         
@@ -106,7 +116,7 @@ class DolibarrAPI:
         if search_term:
             search_filters = f"(t.lastname:like:'%{search_term}%') OR (t.firstname:like:'%{search_term}%') OR (t.email:like:'%{search_term}%')"
         
-        params = self._build_params(limit, sort_order, search_filters)
+        params = self._build_params(limit, sort_order, search_filters, "t.lastname")
         return await self._make_request("GET", f"contacts{params}")
     
     async def create_contact(self, contact_data: Dict) -> Dict:
@@ -120,7 +130,7 @@ class DolibarrAPI:
         if search_term:
             search_filters = f"(t.name:like:'%{search_term}%')"
         
-        params = self._build_params(limit, sort_order, search_filters)
+        params = self._build_params(limit, sort_order, search_filters, "t.name")
         return await self._make_request("GET", f"thirdparties{params}")
     
     async def create_company(self, company_data: Dict) -> Dict:
@@ -128,18 +138,30 @@ class DolibarrAPI:
         return await self._make_request("POST", "thirdparties", company_data)
     
     # ===== GESTION DES PROPOSITIONS =====
-    async def get_proposals(self, limit: int = 10) -> List[Dict]:
-        """Récupère les propositions commerciales"""
-        return await self._make_request("GET", f"proposals?limit={limit}")
+    async def get_proposals(self, limit: int = None, sort_order: str = None) -> List[Dict]:
+        """Récupère les propositions commerciales - VERSION CORRIGÉE"""
+        if limit is None:
+            limit = DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 10
+        if sort_order is None:
+            sort_order = DEFAULT_SORT_ORDER
+            
+        params = self._build_params(limit, sort_order, "", "t.datec")
+        return await self._make_request("GET", f"proposals{params}")
     
     async def create_proposal(self, proposal_data: Dict) -> Dict:
         """Crée une nouvelle proposition commerciale"""
         return await self._make_request("POST", "proposals", proposal_data)
     
-    # ===== AGENDA EVENTS =====
-    async def get_agenda_events(self, limit: int = 10) -> List[Dict]:
-        """Récupère les événements d'agenda"""
-        return await self._make_request("GET", f"agendaevents?limit={limit}")
+    # ===== AGENDA EVENTS - VERSION CORRIGÉE =====
+    async def get_agenda_events(self, limit: int = None, sort_order: str = None) -> List[Dict]:
+        """Récupère les événements d'agenda avec tri correct - VERSION CORRIGÉE"""
+        if limit is None:
+            limit = DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 200  # Plus d'événements par défaut
+        if sort_order is None:
+            sort_order = DEFAULT_SORT_ORDER
+            
+        params = self._build_params(limit, sort_order, "", "t.datep")
+        return await self._make_request("GET", f"agendaevents{params}")
     
     async def create_agenda_event(self, event_data: Dict) -> Dict:
         """Crée un nouvel événement d'agenda"""
@@ -157,10 +179,16 @@ class DolibarrAPI:
         """Supprime un événement d'agenda"""
         return await self._make_request("DELETE", f"agendaevents/{event_id}")
     
-    # ===== TICKETS =====
-    async def get_tickets(self, limit: int = 10) -> List[Dict]:
-        """Récupère la liste des tickets"""
-        return await self._make_request("GET", f"tickets?limit={limit}")
+    # ===== TICKETS - VERSION CORRIGÉE =====
+    async def get_tickets(self, limit: int = None, sort_order: str = None) -> List[Dict]:
+        """Récupère la liste des tickets avec tri correct - VERSION CORRIGÉE"""
+        if limit is None:
+            limit = DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 10
+        if sort_order is None:
+            sort_order = DEFAULT_SORT_ORDER
+            
+        params = self._build_params(limit, sort_order, "", "t.datec")
+        return await self._make_request("GET", f"tickets{params}")
     
     async def create_ticket(self, ticket_data: Dict) -> Dict:
         """Crée un nouveau ticket"""
@@ -213,7 +241,7 @@ server = Server("dolibarr-mcp")
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    """Liste des outils disponibles pour Claude"""
+    """Liste des outils disponibles pour Claude - VERSION CORRIGÉE"""
     return [
         # ===== GESTION DES CONTACTS =====
         types.Tool(
@@ -335,17 +363,23 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         
-        # ===== AGENDA EVENTS =====
+        # ===== AGENDA EVENTS - VERSION CORRIGÉE =====
         types.Tool(
             name="get_agenda_events",
-            description="Récupère la liste des événements d'agenda",
+            description="Récupère la liste des événements d'agenda avec tri correct",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Nombre maximum de résultats",
-                        "default": 10
+                        "description": f"Nombre maximum de résultats (0=aucune limite, défaut: {DEFAULT_LIMIT})",
+                        "default": DEFAULT_LIMIT
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "enum": ["ASC", "DESC"],
+                        "description": f"Ordre de tri (ASC=croissant, DESC=décroissant, défaut: {DEFAULT_SORT_ORDER})",
+                        "default": DEFAULT_SORT_ORDER
                     }
                 }
             }
@@ -409,17 +443,23 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         
-        # ===== TICKETS =====
+        # ===== TICKETS - VERSION CORRIGÉE =====
         types.Tool(
             name="get_tickets",
-            description="Récupère la liste des tickets de support",
+            description="Récupère la liste des tickets de support avec tri correct",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Nombre maximum de résultats",
-                        "default": 10
+                        "description": f"Nombre maximum de résultats (0=aucune limite, défaut: {DEFAULT_LIMIT})",
+                        "default": DEFAULT_LIMIT
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "enum": ["ASC", "DESC"],
+                        "description": f"Ordre de tri (ASC=croissant, DESC=décroissant, défaut: {DEFAULT_SORT_ORDER})",
+                        "default": DEFAULT_SORT_ORDER
                     }
                 }
             }
@@ -522,13 +562,14 @@ async def handle_list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    """Gestionnaire des appels d'outils"""
+    """Gestionnaire des appels d'outils - VERSION CORRIGÉE"""
     try:
         # ===== GESTION DES CONTACTS =====
         if name == "search_contacts":
             search_term = arguments.get("search_term", "")
-            limit = arguments.get("limit", 10)
-            results = await dolibarr_api.search_contacts(search_term, limit)
+            limit = arguments.get("limit", DEFAULT_LIMIT)
+            sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
+            results = await dolibarr_api.search_contacts(search_term, limit, sort_order)
             
             return [types.TextContent(
                 type="text",
@@ -545,8 +586,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         # ===== GESTION DES ENTREPRISES =====
         elif name == "get_companies":
             search_term = arguments.get("search_term", "")
-            limit = arguments.get("limit", 10)
-            results = await dolibarr_api.get_companies(search_term, limit)
+            limit = arguments.get("limit", DEFAULT_LIMIT)
+            sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
+            results = await dolibarr_api.get_companies(search_term, limit, sort_order)
             
             return [types.TextContent(
                 type="text",
@@ -562,8 +604,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         
         # ===== GESTION DES PROPOSITIONS =====
         elif name == "get_proposals":
-            limit = arguments.get("limit", 10)
-            results = await dolibarr_api.get_proposals(limit)
+            limit = arguments.get("limit", DEFAULT_LIMIT)
+            sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
+            results = await dolibarr_api.get_proposals(limit, sort_order)
             
             return [types.TextContent(
                 type="text",
@@ -577,10 +620,11 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 text=f"Proposition créée avec succès. ID: {result.get('id', 'N/A')}"
             )]
         
-        # ===== AGENDA EVENTS =====
+        # ===== AGENDA EVENTS - VERSION CORRIGÉE =====
         elif name == "get_agenda_events":
-            limit = arguments.get("limit", 10)
-            results = await dolibarr_api.get_agenda_events(limit)
+            limit = arguments.get("limit", DEFAULT_LIMIT)
+            sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
+            results = await dolibarr_api.get_agenda_events(limit, sort_order)
             
             return [types.TextContent(
                 type="text",
@@ -619,7 +663,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 text=f"Événement d'agenda supprimé avec succès. ID: {event_id}"
             )]
         
-        # ===== TICKETS =====
+        # ===== TICKETS - VERSION CORRIGÉE =====
         elif name == "get_tickets":
             limit = arguments.get("limit", DEFAULT_LIMIT)
             sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
@@ -718,7 +762,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="dolibarr-mcp",
-                server_version="1.1.0",
+                server_version="1.2.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
@@ -734,5 +778,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Erreur fatale: {e}")
         sys.exit(1)
-Améliorer
-Expliquer
