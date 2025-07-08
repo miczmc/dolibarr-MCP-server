@@ -2,10 +2,11 @@
 """
 Serveur MCP pour intégrer Dolibarr CRM avec Claude
 Version complète avec gestion des contacts, entreprises, propositions, agenda et tickets
-VERSION CORRIGÉE avec tri approprié des événements
+VERSION AMÉLIORÉE avec focus sur les événements récents
 """
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -17,11 +18,12 @@ import httpx
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dolibarr-mcp")
 
-# Configuration via variables d'environnement
+# Configuration via variables d'environnement - AMÉLIORÉE
 DOLIBARR_BASE_URL = os.getenv("DOLIBARR_BASE_URL", "")
 DOLIBARR_API_KEY = os.getenv("DOLIBARR_API_KEY", "")
-DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT", "0"))  # 0 = pas de limite
-DEFAULT_SORT_ORDER = os.getenv("DEFAULT_SORT_ORDER", "DESC")  # DESC = plus récent en premier
+DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT", "100"))  # Augmenté pour plus de contexte
+DEFAULT_SORT_ORDER = os.getenv("DEFAULT_SORT_ORDER", "DESC")  # DESC = plus récents en premier
+DEFAULT_AGENDA_LIMIT = int(os.getenv("DEFAULT_AGENDA_LIMIT", "100"))  # Spécifique aux événements
 
 # Vérification de la configuration
 if not DOLIBARR_API_KEY:
@@ -34,11 +36,12 @@ if not DOLIBARR_BASE_URL:
 
 logger.info(f"Configuration chargée - URL: {DOLIBARR_BASE_URL}")
 logger.info(f"Clé API: {'*' * (len(DOLIBARR_API_KEY) - 4) + DOLIBARR_API_KEY[-4:] if len(DOLIBARR_API_KEY) > 4 else '***'}")
-logger.info(f"Limite par défaut: {DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 'aucune limite'}")
+logger.info(f"Limite par défaut: {DEFAULT_LIMIT}")
 logger.info(f"Ordre par défaut: {DEFAULT_SORT_ORDER}")
+logger.info(f"Limite agenda: {DEFAULT_AGENDA_LIMIT}")
 
 class DolibarrAPI:
-    """Client pour l'API Dolibarr - VERSION CORRIGÉE"""
+    """Client pour l'API Dolibarr - VERSION AMÉLIORÉE"""
     
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip('/')
@@ -49,7 +52,7 @@ class DolibarrAPI:
         }
     
     def _build_params(self, limit: int = None, sort_order: str = None, search_filters: str = "", sort_field: str = None) -> str:
-        """Construit les paramètres d'URL pour les requêtes API - VERSION CORRIGÉE"""
+        """Construit les paramètres d'URL pour les requêtes API"""
         if limit is None:
             limit = DEFAULT_LIMIT
         if sort_order is None:
@@ -61,7 +64,7 @@ class DolibarrAPI:
         if limit > 0:
             params.append(f"limit={limit}")
         
-        # Ajouter l'ordre de tri - CORRECTION PRINCIPALE
+        # Ajouter l'ordre de tri
         if sort_order.upper() in ["ASC", "DESC"]:
             params.append(f"sortorder={sort_order.upper()}")
             
@@ -139,9 +142,9 @@ class DolibarrAPI:
     
     # ===== GESTION DES PROPOSITIONS =====
     async def get_proposals(self, limit: int = None, sort_order: str = None) -> List[Dict]:
-        """Récupère les propositions commerciales - VERSION CORRIGÉE"""
+        """Récupère les propositions commerciales"""
         if limit is None:
-            limit = DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 10
+            limit = DEFAULT_LIMIT
         if sort_order is None:
             sort_order = DEFAULT_SORT_ORDER
             
@@ -152,15 +155,62 @@ class DolibarrAPI:
         """Crée une nouvelle proposition commerciale"""
         return await self._make_request("POST", "proposals", proposal_data)
     
-    # ===== AGENDA EVENTS - VERSION CORRIGÉE =====
-    async def get_agenda_events(self, limit: int = None, sort_order: str = None) -> List[Dict]:
-        """Récupère les événements d'agenda avec tri correct - VERSION CORRIGÉE"""
+    # ===== AGENDA EVENTS - VERSION AMÉLIORÉE =====
+    async def get_agenda_events(self, limit: int = None, sort_order: str = None, filter_type: str = None) -> List[Dict]:
+        """
+        Récupère les événements d'agenda avec tri optimisé pour l'usage CRM
+        
+        Args:
+            limit: Nombre max d'événements (défaut: 100 pour plus d'événements récents)
+            sort_order: ASC ou DESC (défaut: DESC = plus récents en premier)
+            filter_type: 'future', 'past', 'today', 'this_week', 'this_month' ou None
+        """
         if limit is None:
-            limit = DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 200  # Plus d'événements par défaut
+            limit = DEFAULT_AGENDA_LIMIT  # 100 par défaut pour plus de contexte
         if sort_order is None:
-            sort_order = DEFAULT_SORT_ORDER
+            sort_order = DEFAULT_SORT_ORDER  # DESC par défaut = plus récents en premier
+        
+        # Construction des filtres temporels
+        search_filters = ""
+        if filter_type:
+            now = datetime.datetime.now()
             
-        params = self._build_params(limit, sort_order, "", "t.datep")
+            if filter_type == "future":
+                # Événements futurs uniquement
+                search_filters = f"(t.datep >= '{now.strftime('%Y-%m-%d %H:%M:%S')}')"
+            elif filter_type == "past":
+                # Événements passés uniquement  
+                search_filters = f"(t.datep < '{now.strftime('%Y-%m-%d %H:%M:%S')}')"
+            elif filter_type == "today":
+                # Événements d'aujourd'hui
+                today_start = now.replace(hour=0, minute=0, second=0)
+                today_end = now.replace(hour=23, minute=59, second=59)
+                search_filters = f"(t.datep >= '{today_start.strftime('%Y-%m-%d %H:%M:%S')}') AND (t.datep <= '{today_end.strftime('%Y-%m-%d %H:%M:%S')}')"
+            elif filter_type == "this_week":
+                # Événements de cette semaine
+                week_start = now - datetime.timedelta(days=now.weekday())
+                week_start = week_start.replace(hour=0, minute=0, second=0)
+                week_end = week_start + datetime.timedelta(days=6, hours=23, minutes=59, seconds=59)
+                search_filters = f"(t.datep >= '{week_start.strftime('%Y-%m-%d %H:%M:%S')}') AND (t.datep <= '{week_end.strftime('%Y-%m-%d %H:%M:%S')}')"
+            elif filter_type == "this_month":
+                # Événements de ce mois
+                month_start = now.replace(day=1, hour=0, minute=0, second=0)
+                if now.month == 12:
+                    month_end = now.replace(year=now.year+1, month=1, day=1, hour=0, minute=0, second=0) - datetime.timedelta(seconds=1)
+                else:
+                    month_end = now.replace(month=now.month+1, day=1, hour=0, minute=0, second=0) - datetime.timedelta(seconds=1)
+                search_filters = f"(t.datep >= '{month_start.strftime('%Y-%m-%d %H:%M:%S')}') AND (t.datep <= '{month_end.strftime('%Y-%m-%d %H:%M:%S')}')"
+        
+        params = self._build_params(limit, sort_order, search_filters, "t.datep")
+        return await self._make_request("GET", f"agendaevents{params}")
+    
+    async def get_upcoming_events(self, limit: int = 50, days_ahead: int = 30) -> List[Dict]:
+        """Récupère les événements à venir dans les X prochains jours"""
+        now = datetime.datetime.now()
+        future_date = now + datetime.timedelta(days=days_ahead)
+        
+        search_filters = f"(t.datep >= '{now.strftime('%Y-%m-%d %H:%M:%S')}') AND (t.datep <= '{future_date.strftime('%Y-%m-%d %H:%M:%S')}')"
+        params = self._build_params(limit, "ASC", search_filters, "t.datep")  # ASC pour les futurs = chronologique
         return await self._make_request("GET", f"agendaevents{params}")
     
     async def create_agenda_event(self, event_data: Dict) -> Dict:
@@ -179,11 +229,11 @@ class DolibarrAPI:
         """Supprime un événement d'agenda"""
         return await self._make_request("DELETE", f"agendaevents/{event_id}")
     
-    # ===== TICKETS - VERSION CORRIGÉE =====
+    # ===== TICKETS =====
     async def get_tickets(self, limit: int = None, sort_order: str = None) -> List[Dict]:
-        """Récupère la liste des tickets avec tri correct - VERSION CORRIGÉE"""
+        """Récupère la liste des tickets de support"""
         if limit is None:
-            limit = DEFAULT_LIMIT if DEFAULT_LIMIT > 0 else 10
+            limit = DEFAULT_LIMIT
         if sort_order is None:
             sort_order = DEFAULT_SORT_ORDER
             
@@ -241,7 +291,7 @@ server = Server("dolibarr-mcp")
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    """Liste des outils disponibles pour Claude - VERSION CORRIGÉE"""
+    """Liste des outils disponibles pour Claude - VERSION AMÉLIORÉE"""
     return [
         # ===== GESTION DES CONTACTS =====
         types.Tool(
@@ -336,13 +386,13 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": f"Nombre maximum de résultats (0=aucune limite, défaut: {DEFAULT_LIMIT})",
+                        "description": f"Nombre maximum de résultats (défaut: {DEFAULT_LIMIT})",
                         "default": DEFAULT_LIMIT
                     },
                     "sort_order": {
                         "type": "string",
                         "enum": ["ASC", "DESC"],
-                        "description": f"Ordre de tri (ASC=croissant, DESC=décroissant, défaut: {DEFAULT_SORT_ORDER})",
+                        "description": f"Ordre de tri (défaut: {DEFAULT_SORT_ORDER} = plus récentes en premier)",
                         "default": DEFAULT_SORT_ORDER
                     }
                 }
@@ -363,23 +413,47 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         
-        # ===== AGENDA EVENTS - VERSION CORRIGÉE =====
+        # ===== AGENDA EVENTS - VERSION AMÉLIORÉE =====
         types.Tool(
             name="get_agenda_events",
-            description="Récupère la liste des événements d'agenda avec tri correct",
+            description="Récupère les événements d'agenda avec tri optimisé (récents en premier par défaut, 100 événements)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": f"Nombre maximum de résultats (0=aucune limite, défaut: {DEFAULT_LIMIT})",
-                        "default": DEFAULT_LIMIT
+                        "description": f"Nombre maximum de résultats (défaut: {DEFAULT_AGENDA_LIMIT} pour plus de contexte)",
+                        "default": DEFAULT_AGENDA_LIMIT
                     },
                     "sort_order": {
                         "type": "string",
                         "enum": ["ASC", "DESC"],
-                        "description": f"Ordre de tri (ASC=croissant, DESC=décroissant, défaut: {DEFAULT_SORT_ORDER})",
+                        "description": f"Ordre de tri (ASC=anciens d'abord, DESC=récents d'abord, défaut: {DEFAULT_SORT_ORDER})",
                         "default": DEFAULT_SORT_ORDER
+                    },
+                    "filter_type": {
+                        "type": "string",
+                        "enum": ["future", "past", "today", "this_week", "this_month"],
+                        "description": "Filtre temporel optionnel (future=à venir, past=passés, today=aujourd'hui, etc.)"
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="get_upcoming_events",
+            description="Récupère spécifiquement les événements à venir (futurs) triés par date croissante",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Nombre maximum d'événements à venir (défaut: 50)",
+                        "default": 50
+                    },
+                    "days_ahead": {
+                        "type": "integer", 
+                        "description": "Nombre de jours à l'avance à considérer (défaut: 30)",
+                        "default": 30
                     }
                 }
             }
@@ -443,22 +517,22 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         
-        # ===== TICKETS - VERSION CORRIGÉE =====
+        # ===== TICKETS =====
         types.Tool(
             name="get_tickets",
-            description="Récupère la liste des tickets de support avec tri correct",
+            description="Récupère la liste des tickets de support avec tri optimisé (récents en premier)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": f"Nombre maximum de résultats (0=aucune limite, défaut: {DEFAULT_LIMIT})",
+                        "description": f"Nombre maximum de résultats (défaut: {DEFAULT_LIMIT})",
                         "default": DEFAULT_LIMIT
                     },
                     "sort_order": {
                         "type": "string",
                         "enum": ["ASC", "DESC"],
-                        "description": f"Ordre de tri (ASC=croissant, DESC=décroissant, défaut: {DEFAULT_SORT_ORDER})",
+                        "description": f"Ordre de tri (défaut: {DEFAULT_SORT_ORDER} = plus récents en premier)",
                         "default": DEFAULT_SORT_ORDER
                     }
                 }
@@ -562,7 +636,7 @@ async def handle_list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    """Gestionnaire des appels d'outils - VERSION CORRIGÉE"""
+    """Gestionnaire des appels d'outils - VERSION AMÉLIORÉE"""
     try:
         # ===== GESTION DES CONTACTS =====
         if name == "search_contacts":
@@ -620,11 +694,22 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 text=f"Proposition créée avec succès. ID: {result.get('id', 'N/A')}"
             )]
         
-        # ===== AGENDA EVENTS - VERSION CORRIGÉE =====
+        # ===== AGENDA EVENTS - VERSION AMÉLIORÉE =====
         elif name == "get_agenda_events":
-            limit = arguments.get("limit", DEFAULT_LIMIT)
-            sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
-            results = await dolibarr_api.get_agenda_events(limit, sort_order)
+            limit = arguments.get("limit", DEFAULT_AGENDA_LIMIT)  # 100 par défaut
+            sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)  # DESC par défaut
+            filter_type = arguments.get("filter_type", None)
+            results = await dolibarr_api.get_agenda_events(limit, sort_order, filter_type)
+            
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(results, indent=2, ensure_ascii=False)
+            )]
+        
+        elif name == "get_upcoming_events":
+            limit = arguments.get("limit", 50)
+            days_ahead = arguments.get("days_ahead", 30) 
+            results = await dolibarr_api.get_upcoming_events(limit, days_ahead)
             
             return [types.TextContent(
                 type="text",
@@ -663,7 +748,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 text=f"Événement d'agenda supprimé avec succès. ID: {event_id}"
             )]
         
-        # ===== TICKETS - VERSION CORRIGÉE =====
+        # ===== TICKETS =====
         elif name == "get_tickets":
             limit = arguments.get("limit", DEFAULT_LIMIT)
             sort_order = arguments.get("sort_order", DEFAULT_SORT_ORDER)
@@ -743,7 +828,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
 
 async def main():
     """Point d'entrée principal"""
-    logger.info("Démarrage du serveur MCP Dolibarr...")
+    logger.info("Démarrage du serveur MCP Dolibarr amélioré...")
     
     # Test de connexion à l'API
     try:
@@ -762,7 +847,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="dolibarr-mcp",
-                server_version="1.2.0",
+                server_version="1.3.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
